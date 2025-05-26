@@ -1,19 +1,24 @@
 import sys
 import os
+import traceback
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton,
-    QLabel, QFileDialog, QTextEdit, QHBoxLayout
+    QLabel, QFileDialog, QTextEdit, QHBoxLayout,
+    QMessageBox
 )
 from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSlot
 from .caption_worker import CaptionWorker
 
 class CaptionApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('Image Captioning Interface')
-        self.setGeometry(100, 100, 600, 400)
+        self.setWindowTitle('InsightEye - Intelligent Image Captioning')
+        self.setGeometry(100, 100, 700, 500)
         self.layout = QVBoxLayout()
+        
+        # Global exception handler to prevent app from crashing
+        sys.excepthook = self.excepthook
 
         # Status bar at the top
         self.status_bar = QLabel()
@@ -88,19 +93,49 @@ class CaptionApp(QWidget):
 
     def start_worker(self, mode, file_path=None):
         # Clean up any existing worker
-        if self.worker:
-            self.worker.finished.disconnect()
-            self.worker.deleteLater()
+        try:
+            if self.worker:
+                if self.worker.isRunning():
+                    try:
+                        self.worker.finished.disconnect()
+                    except Exception:
+                        pass
+                    self.worker.quit()
+                    self.worker.wait(1000)  # Wait with timeout to avoid hanging
+                try:
+                    self.worker.deleteLater()
+                except Exception:
+                    pass
+                self.worker = None
+        except Exception as e:
+            print(f"Error cleaning up worker: {str(e)}")
             self.worker = None
 
-        self.worker = CaptionWorker(mode, file_path)
-        self.worker.finished.connect(self.on_worker_finished)
-        self.worker.start()
+        # Show loading indicator
+        self.show_loading(True)
+        
+        try:
+            # Create and start the worker
+            self.worker = CaptionWorker(mode, file_path)
+            self.worker.finished.connect(self.on_worker_finished)
+            self.worker.start()
+        except Exception as e:
+            self.show_loading(False)
+            error_msg = f"Failed to start worker: {str(e)}"
+            print(error_msg)
+            self.status_bar.setText(error_msg)
+            QMessageBox.critical(self, "Error", error_msg)
 
     def on_worker_finished(self, output, error):
         self.show_loading(False)
         
-        if self.worker.mode == 'webcam':
+        # Check if we still have a valid worker reference
+        if not self.worker:
+            return
+            
+        worker_mode = self.worker.mode
+        
+        if worker_mode == 'webcam':
             # Get the absolute path to the images directory
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             images_dir = os.path.join(base_dir, 'images')
@@ -126,7 +161,41 @@ class CaptionApp(QWidget):
             self.info_label.setText("Operation completed.")
             self.status_bar.setText("Ready")
 
-        # Clean up the worker
-        if self.worker:
-            self.worker.deleteLater()
+        # Store the worker temporarily to avoid it being garbage collected
+        temp_worker = self.worker
+        self.worker = None
+        
+        # Use a safer cleanup approach for the worker
+        if temp_worker:
+            # Disconnect signals first
+            try:
+                temp_worker.finished.disconnect()
+            except:
+                pass
+            
+            # Then delete the worker later
+            temp_worker.deleteLater()
+
+    def excepthook(self, exc_type, exc_value, exc_traceback):
+        """Handle uncaught exceptions to prevent app from closing"""
+        error_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        print(f"Uncaught exception: {error_msg}")
+        
+        # Show error dialog but keep app running
+        QMessageBox.critical(self, 
+                           "An error occurred", 
+                           f"The application encountered an error but will continue running.\n\nError details:\n{str(exc_value)}")
+        
+        # Make sure UI is responsive
+        self.show_loading(False)
+        self.status_bar.setText(f"Error: {str(exc_value)[:50]}...")
+        
+        # Clean up any potentially running worker
+        try:
+            if self.worker and self.worker.isRunning():
+                self.worker.quit()
+                self.worker.wait(1000)
+                self.worker.deleteLater()
+                self.worker = None
+        except:
             self.worker = None

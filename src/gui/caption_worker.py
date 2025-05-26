@@ -24,32 +24,76 @@ class CaptionWorker(QThread):
         try:
             if self.mode == 'voice':
                 command = self.speech_processor.listen_for_command()
-                if command and ('take picture' in command or 'click picture' in command):
+                if not command:
+                    self.finished.emit('', 'Failed to receive a voice command. Please try again.')
+                    return
+                
+                if 'take picture' in command or 'click picture' in command:
                     image_path = self.image_processor.capture_image()
-                    if image_path:
-                        image = self.image_processor.process_image(image_path)
-                        caption = self.caption_generator.generate_caption(image)
-                        if caption:
-                            self.speech_processor.speak(caption)
-                            self.finished.emit(caption, '')
-            elif self.mode == 'upload':
-                if self.file_path:
-                    image = self.image_processor.process_image(self.file_path)
+                    if not image_path:
+                        self.finished.emit('', 'Failed to capture an image from the webcam.')
+                        return
+                        
+                    image = self.image_processor.process_image(image_path)
+                    if not image:
+                        self.finished.emit('', f'Failed to process the captured image at {image_path}.')
+                        return
+                        
                     caption = self.caption_generator.generate_caption(image)
-                    if caption:
-                        self.speech_processor.speak(caption)
-                        self.finished.emit(caption, '')
+                    if not caption:
+                        self.finished.emit('', 'Failed to generate a caption for the image.')
+                        return
+                        
+                    self.speech_processor.speak(caption)
+                    self.finished.emit(caption, '')
+                else:
+                    self.finished.emit('', f'Unrecognized command: "{command}". Please try saying "take picture".')
+                    
+            elif self.mode == 'upload':
+                if not self.file_path:
+                    self.finished.emit('', 'No file was selected for upload.')
+                    return
+                    
+                image = self.image_processor.process_image(self.file_path)
+                if not image:
+                    self.finished.emit('', f'Failed to process the uploaded image at {self.file_path}.')
+                    return
+                    
+                caption = self.caption_generator.generate_caption(image)
+                if not caption:
+                    self.finished.emit('', 'Failed to generate a caption for the image.')
+                    return
+                    
+                self.speech_processor.speak(caption)
+                self.finished.emit(caption, '')
+                
             elif self.mode == 'webcam':
                 image_path = self.image_processor.capture_image()
-                if image_path:
-                    image = self.image_processor.process_image(image_path)
-                    caption = self.caption_generator.generate_caption(image)
-                    if caption:
-                        self.speech_processor.speak(caption)
-                        self.finished.emit(caption, '')
+                if not image_path:
+                    self.finished.emit('', 'Failed to capture an image from the webcam.')
+                    return
+                    
+                image = self.image_processor.process_image(image_path)
+                if not image:
+                    self.finished.emit('', f'Failed to process the captured image at {image_path}.')
+                    return
+                    
+                caption = self.caption_generator.generate_caption(image)
+                if not caption:
+                    self.finished.emit('', 'Failed to generate a caption for the image.')
+                    return
+                    
+                self.speech_processor.speak(caption)
+                self.finished.emit(caption, '')
+                
+            else:
+                self.finished.emit('', f'Unknown mode: {self.mode}')
 
         except Exception as e:
-            self.finished.emit('', f'Exception: {str(e)}')
+            import traceback
+            error_msg = f'Exception: {str(e)}\n{traceback.format_exc()}'
+            print(f"❌ Error in CaptionWorker: {error_msg}")
+            self.finished.emit('', error_msg)
 
     def __del__(self):
         try:
